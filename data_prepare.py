@@ -103,6 +103,17 @@ def prepare_data(parent_path='e:/waterGame/data/'):
     valid_set1.to_csv(parent_path + 'prepare/valid_set1.csv')
     valid_set2.to_csv(parent_path + 'prepare/valid_set2.csv')
     valid_set3.to_csv(parent_path + 'prepare/valid_set3.csv')
+
+    # 训练数据按qi连续分割
+    train_set34 = train_set[train_set.index.map(lambda x: x.year <= 2014)]
+    train_set56 = train_set[train_set.index.map(lambda x: x.year in (2015, 2016))]
+    train_set7 = train_set[train_set.index.map(lambda x: x.year == 2017)]
+    train_set567 = train_set[train_set.index.map(lambda x: x.year in (2015, 2016, 2017))]
+
+    train_set34.to_csv(parent_path + 'prepare/train_set34.csv')
+    train_set56.to_csv(parent_path + 'prepare/train_set56.csv')
+    train_set7.to_csv(parent_path + 'prepare/train_set7.csv')
+    train_set567.to_csv(parent_path + 'prepare/train_set567.csv')
     print('数据准备完成')
 
 

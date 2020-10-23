@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
 from keras.models import Sequential
 from keras.layers import Dense
-from keras.layers import LSTM
+from keras.layers import LSTM, RepeatVector, TimeDistributed, Bidirectional, Conv1D, MaxPooling1D, Flatten
 from keras import optimizers
 import itertools
 import time
@@ -46,7 +46,7 @@ def expand_grid(**kwargs):
 
 
 # 分割序列为监督学习
-def split_sequence(data, x, y, n_lag=1, n_seq=1, week_seq=56, drop_nan=True, remain_merge=False, valid=False):
+def to_supervised(data, x, y, n_lag=1, n_seq=1, week_seq=56, drop_nan=True, remain_merge=False, valid=False):
     """时间序列转为监督学习数据
 
     :param data: Sequence of observations as a list or NumPy array.
@@ -103,7 +103,7 @@ def split_sequence(data, x, y, n_lag=1, n_seq=1, week_seq=56, drop_nan=True, rem
         agg.dropna(inplace=True)
     # 分开
     if valid:
-        return agg[feature_names], agg[target_names], agg[week_target_names], pred_x
+        return pred_x
     else:
         return agg[feature_names], agg[target_names], agg[week_target_names]
 
@@ -126,6 +126,54 @@ def fit_lstm(train_x, train_y, steps_in, steps_out, n_features, lr, units, activ
     model.add(Dense(steps_out))
     model.compile(optimizer=adam, loss='mse')
     model.fit(x, y, epochs=epochs, batch_size=batches, verbose=2)
+
+    return model
+
+
+# 训练lstm模型
+def fitting_lstm(train_x, train_y, valid_x, valid_y, steps_in, steps_out, n_features, lr, units, activation, drop_out,
+                 epochs, batches, lstm_kind, shuffle):
+    # 数据框转为数组
+    x = np.array(train_x)
+    y = np.array(train_y)
+    valid_x = np.array(valid_x)
+    valid_y = np.array(valid_y)
+
+    # x变形 [samples, timesteps, features]
+    x = x.reshape((train_x.shape[0], steps_in, n_features))
+    valid_x = valid_x.reshape((valid_x.shape[0], steps_in, n_features))
+
+    # 模型初始化
+    model = Sequential()
+    # 设计不同的模型
+    if lstm_kind == 'vector':
+        model.add(LSTM(units, activation=activation, input_shape=(steps_in, n_features), return_sequences=True))
+        model.add(LSTM(units, activation=activation, dropout=drop_out))
+        model.add(Dense(steps_out))
+    elif lstm_kind == 'encoder-decoder':
+        # y变形[samples,timesteps,features]
+        y = y.reshape((train_y.shape[0], steps_out, 1))
+        # encoder-decoder lstm
+        model.add(LSTM(units, activation=activation, input_shape=(steps_in, n_features)))  # encoder
+        model.add(RepeatVector(steps_out))  # decoder
+        model.add(LSTM(units, activation=activation, return_sequences=True))  # decoder
+        model.add(TimeDistributed(Dense(1, activation=activation)))
+        model.add(TimeDistributed(Dense(1)))
+    elif lstm_kind == 'bidirectional':
+        # 双向lstm
+        model.add(Bidirectional(LSTM(units, activation=activation), input_shape=(steps_in, n_features)))
+        model.add(Dense(steps_out))
+    else:
+        # 堆叠lstm
+        model.add(LSTM(units, activation=activation, return_sequences=True, input_shape=(steps_in, n_features)))
+        model.add(LSTM(units, activation=activation, return_sequences=True, dropout=drop_out, recurrent_dropout=0.2))
+        model.add(LSTM(units, activation=activation, dropout=drop_out, recurrent_dropout=0.2))
+        model.add(Dense(steps_out))
+    # 优化器
+    adam = optimizers.Adam(learning_rate=lr)
+    # 模型编译
+    model.compile(optimizer=adam, loss='mse')
+    model.fit(x, y, epochs=epochs, batch_size=batches, verbose=2, shuffle=shuffle, validation_data=(valid_x, valid_y))
 
     return model
 
@@ -168,6 +216,9 @@ def week_predict(model, X, steps_in, steps_out, n_features):
         X = X.reshape((X.shape[0], steps_in, n_features))
         # 预测值
         y_week_predict = model.predict(X)
+        # 3维变2维
+        if y_week_predict.shape.__len__() == 3:
+            y_week_predict = y_week_predict.reshape((y_week_predict.shape[0], y_week_predict.shape[1]))
     else:
         y_week_window = list()
         X_append = X
@@ -178,6 +229,9 @@ def week_predict(model, X, steps_in, steps_out, n_features):
             X_window = X_window.reshape((X_window.shape[0], steps_in, n_features))
             # 预测
             y_window = model.predict(X_window)
+            # 3维变2维
+            if y_window.shape.__len__() == 3:
+                y_window = y_window.reshape((y_window.shape[0], y_window.shape[1]))
             # 保存结果
             y_week_window.append(y_window)
             # 预测结果放入X
@@ -217,27 +271,24 @@ def week_evaluate_model(seq, output_path, model, x_df, y_df, y_week_df, steps_in
     # 纵向指标数据框
     col_df = pd.DataFrame({'CMSE': col_mse}, index=y_week_df.columns)
     # 指标统计量,反映模型性能
-    stat_df = row_df.agg(['mean', 'min', 'max', 'median']).melt(ignore_index=False)
+    stat_df = row_df.agg(['mean']).melt(ignore_index=False)
     # 变形为一行
     stat_df = stat_df[['value']]. \
-        set_index(prefix + '_' + stat_df.index + stat_df['variable']).T
+        set_index(prefix + '_' + stat_df['variable']).T
     # 返回统计指标、数据框(画图)
     return stat_df, (row_df, col_df)
 
 
 # 指标绘图
-def metric_plot(seq, train_detail, valid1_detail, valid2_detail, valid3_detail, output_path):
+def metric_plot(seq, train_detail, valid_detail, output_path):
     train_row, train_col = train_detail
-    valid1_row, valid1_col = valid1_detail
-    valid2_row, valid2_col = valid2_detail
-    valid3_row, valid3_col = valid3_detail
+    valid_row, valid_col = valid_detail
     # 1 行指标图
     plt.switch_backend('agg')
     plt.figure(figsize=(20, 12))
-    for i, (data, name) in enumerate(
-            [(valid1_row, 'valid1'), (valid2_row, 'valid2'), (valid3_row, 'valid3'), (train_row, 'train')]):
+    for i, (data, name) in enumerate([(valid_row, 'valid'), (train_row, 'train')]):
         for j, col in enumerate(['NSE', 'MSE']):
-            plt.subplot(421 + 2 * i + j)
+            plt.subplot(221 + 2 * i + j)
             plt.plot(data[col], color='r' if col == 'MSE' else 'g', label=col)
             plt.legend()
             plt.title(name + col)
@@ -246,9 +297,8 @@ def metric_plot(seq, train_detail, valid1_detail, valid2_detail, valid3_detail, 
     # 2 列指标图
     r = 90  # x轴刻度旋转角度（逆时针）
     plt.figure(figsize=(18, 12))
-    for i, (data, name) in enumerate(
-            [(valid1_col, 'valid1'), (valid2_col, 'valid2'), (valid3_col, 'valid3'), (train_col, 'train')]):
-        plt.subplot(411 + i)
+    for i, (data, name) in enumerate([(valid_col, 'valid'), (train_col, 'train')]):
+        plt.subplot(211 + i)
         plt.plot(data, label='CMSE')
         plt.legend()
         exec('plt.xticks([])' if name != 'train' else 'plt.xticks(rotation=r)')
@@ -260,46 +310,75 @@ def metric_plot(seq, train_detail, valid1_detail, valid2_detail, valid3_detail, 
 # 单次训练
 def single_train(data, row_para, output_path):
     # 数据与参数
-    train_set, valid_set1, valid_set2, valid_set3 = data
+    train_set, train_set34, train_set56, train_set567, train_set7, valid_set1, valid_set2, valid_set3 = data
     paras = row_para.iloc[0, :].to_dict().values()
-    seq, targets, features, steps_out, steps_in, lr, units, activation, drop_out, epochs, batches = paras
+    seq, targets, features, steps_out, steps_in, lr, units, activation, drop_out, epochs, batches, lstm_kind, train_valid_kind = paras
 
     # step 1: 时间序列数据转为监督学习数据
 
     # 训练数据
-    train_x, train_y, train_y_week = split_sequence(train_set, features, targets, steps_in, steps_out)
-    # 验证数据,预测数据
-    valid1_x, valid1_y, valid1_y_week, test1_x = split_sequence(valid_set1, features, targets, steps_in, steps_out,
-                                                                valid=True)
-    valid2_x, valid2_y, valid2_y_week, test2_x = split_sequence(valid_set2, features, targets, steps_in, steps_out,
-                                                                valid=True)
-    valid3_x, valid3_y, valid3_y_week, test3_x = split_sequence(valid_set3, features, targets, steps_in, steps_out,
-                                                                valid=True)
+    train_x, train_y, train_y_week = to_supervised(train_set, features, targets, steps_in, steps_out)
+    train34_x, train34_y, train34_y_week = to_supervised(train_set34, features, targets, steps_in, steps_out)
+    train56_x, train56_y, train56_y_week = to_supervised(train_set56, features, targets, steps_in, steps_out)
+    train7_x, train7_y, train7_y_week = to_supervised(train_set7, features, targets, steps_in, steps_out)
+    train567_x, train567_y, train567_y_week = to_supervised(train_set567, features, targets, steps_in, steps_out)
+    # 预测数据
+    test1_x = to_supervised(valid_set1, features, targets, steps_in, steps_out, valid=True)
+    test2_x = to_supervised(valid_set2, features, targets, steps_in, steps_out, valid=True)
+    test3_x = to_supervised(valid_set3, features, targets, steps_in, steps_out, valid=True)
+    # 选择训练数据，验证数据
+    if train_valid_kind == 'all-7v':
+        train_x = train_x
+        train_y = train_y
+        train_y_week = train_y_week
+        valid_x = train7_x
+        valid_y = train7_y
+        valid_y_week = train7_y_week
+        shuffle = True
+    elif train_valid_kind == '56t-7v':
+        train_x = train56_x
+        train_y = train56_y
+        train_y_week = train56_y_week
+        valid_x = train7_x
+        valid_y = train7_y
+        valid_y_week = train7_y_week
+        shuffle = False
+    elif train_valid_kind == '567t-7v':
+        train_x = train567_x
+        train_y = train567_y
+        train_y_week = train567_y_week
+        valid_x = train7_x
+        valid_y = train7_y
+        valid_y_week = train7_y_week
+        shuffle = False
+    else:
+        train_x = train567_x
+        train_y = train567_y
+        train_y_week = train567_y_week
+        valid_x = train34_x
+        valid_y = train34_y
+        valid_y_week = train34_y_week
+        shuffle = False
 
     # step 2: 训练模型
 
     # 特征个数
     n_features = len(features)
     # lstm模型
-    model = fit_lstm(train_x, train_y, steps_in, steps_out, n_features, lr, units, activation, drop_out, epochs,
-                     batches)
-
+    model = fitting_lstm(train_x, train_y, valid_x, valid_y, steps_in, steps_out, n_features, lr, units,
+                         activation, drop_out, epochs, batches, lstm_kind, shuffle)
     # step 3：模型评估
 
     # 对训练数据、验证数据评估
     train_stat, train_detail = week_evaluate_model(seq, output_path, model, train_x, train_y, train_y_week, steps_in,
                                                    steps_out, n_features, 'train')
-    valid1_stat, valid1_detail = week_evaluate_model(seq, output_path, model, valid1_x, valid1_y, valid1_y_week,
-                                                     steps_in, steps_out, n_features, 'valid1')
-    valid2_stat, valid2_detail = week_evaluate_model(seq, output_path, model, valid2_x, valid2_y, valid2_y_week,
-                                                     steps_in, steps_out, n_features, 'valid2')
-    valid3_stat, valid3_detail = week_evaluate_model(seq, output_path, model, valid3_x, valid3_y, valid3_y_week,
-                                                     steps_in, steps_out, n_features, 'valid3')
+    valid_stat, valid_detail = week_evaluate_model(seq, output_path, model, valid_x, valid_y, valid_y_week, steps_in,
+                                                   steps_out, n_features, 'valid')
+
     # 评估汇总（训练，验证）
-    row_stat = pd.concat([train_stat, valid1_stat, valid2_stat, valid3_stat], axis=1). \
+    row_stat = pd.concat([train_stat, valid_stat], axis=1). \
         set_axis(row_para.index). \
-        assign(NSE=lambda x: x[['valid1_meanNSE', 'valid2_meanNSE', 'valid3_meanNSE']].mean(axis=1),
-               score1=0, score2=0, score3=0, score=0). \
+        assign(score1=0, score2=0, score3=0, score=0). \
         round(4)
     # 合并参数与评估
     metric = pd.concat([row_para, row_stat], axis=1)
@@ -308,7 +387,7 @@ def single_train(data, row_para, output_path):
 
     # step 4:评估可视化
 
-    metric_plot(seq, train_detail, valid1_detail, valid2_detail, valid3_detail, output_path)
+    metric_plot(seq, train_detail, valid_detail, output_path)
 
     # step 5:预测
 

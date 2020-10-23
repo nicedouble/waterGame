@@ -29,12 +29,16 @@ if __name__ == '__main__':
 
     # step 2:模型网格训练
     # 特征正则表达式
+    # regex_features = [
+    #     'Qi',
+    #     'Qi|T', 'Qi|w$', 'Qi|R.*', 'Qi|month.*', 'Qi|season.*', 'Qi|D.*',
+    #     'Qi|T|R.*', 'Qi|T|w$', 'Qi|T|month.*', 'Qi|T|season.*', 'Qi|T|D.*',
+    #     'Qi|T|R.*|w$', 'Qi|T|R.*|season.*', 'Qi|T|R.*|month.*',
+    #     'Qi|T|R.*|season.*|month.*',
+    # ]
     regex_features = [
-        'Qi',
-        'Qi|T', 'Qi|w$', 'Qi|R.*', 'Qi|month.*', 'Qi|season.*', 'Qi|D.*',
-        'Qi|T|R.*', 'Qi|T|w$', 'Qi|T|month.*', 'Qi|T|season.*', 'Qi|T|D.*',
-        'Qi|T|R.*|w$', 'Qi|T|R.*|season.*', 'Qi|T|R.*|month.*',
-        'Qi|T|R.*|season.*|month.*',
+        'Qi', 'Qi|T', 'Qi|Rsum',
+        'Qi|T|Rsum', 'Qi|T|Rsum|season.*|month.*'
     ]
     # 特征名
     features = [[j[0] for j in [re.findall(k, i) for i in data[0].columns] if j] for k in regex_features]
@@ -42,13 +46,15 @@ if __name__ == '__main__':
     grid_df = expand_grid(targets=[['Qi']],
                           features=features,
                           steps_out=[56],
-                          steps_in=[i * 56 for i in [3]],
+                          steps_in=[i * 56 for i in [4]],
                           lr=[1e-3],
-                          units=[50, 75, 100],
-                          activation=['tanh'],
-                          drop_out=[0],
-                          epochs=[30],
-                          batches=[32])
+                          units=[30, 50, 100],
+                          activation=['tanh', 'relu'],
+                          drop_out=[0, 0.1],
+                          epochs=[150],
+                          batches=[32],
+                          lstm_kind=['bidirectional', 'vector', 'encoder-decoder', 'stacked'],
+                          train_valid_kind=['56t-7v', '567t-7v', 'all-7v'])
 
     # 网格训练，自动参数寻优
     output_path = 'e:/waterGame/result/mimo/'
