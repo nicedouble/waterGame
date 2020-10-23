@@ -48,16 +48,16 @@ if __name__ == '__main__':
                           steps_out=[56],
                           steps_in=[i * 56 for i in [4]],
                           lr=[1e-3],
-                          units=[30, 50, 100],
+                          units=[10, 30, 50, 100],
                           activation=['tanh', 'relu'],
                           drop_out=[0, 0.1],
-                          epochs=[150],
+                          epochs=[100],
                           batches=[32],
                           lstm_kind=['bidirectional', 'vector', 'encoder-decoder', 'stacked'],
                           train_valid_kind=['56t-7v', '567t-7v', 'all-7v'])
 
     # 网格训练，自动参数寻优
-    output_path = 'e:/waterGame/result/mimo/'
+    output_path = BASE_DIR + '/result/mimo/'
     # best_model, best_test, best_para = grid_train(grid_df, data, output_path)
     grid_train(grid_df, data, output_path)
 

@@ -28,10 +28,13 @@ import time
 import os
 import re
 
+BASE_DIR = os.path.abspath('.')
 
-def data_preprocessing(parent_path='e:/waterGame/data/prepare/'):
+
+def data_preprocessing(base_dir=BASE_DIR, parent_path='/data/prepare/'):
     # 批量处理
-    result = map(lambda x: pd.read_csv(parent_path + x, index_col=0, parse_dates=True), os.listdir(parent_path))
+    result = map(lambda x: pd.read_csv(base_dir + parent_path + x, index_col=0, parse_dates=True),
+                 os.listdir(base_dir + parent_path))
     # 返回
     return tuple(result)
 
